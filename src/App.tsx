@@ -168,24 +168,26 @@ export default function App() {
 
         {user ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
-            <TabsList className={`${theme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-200/50 border-slate-300'} backdrop-blur-md border p-1 rounded-xl flex-wrap h-auto`}>
-              <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
-                <Home className="w-4 h-4 mr-2" />
-                Dashboard
-              </TabsTrigger>
-              <TabsTrigger value="stats" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
-                <BarChart3 className="w-4 h-4 mr-2" />
-                Stats
-              </TabsTrigger>
-              <TabsTrigger value="timer" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
-                <Clock className="w-4 h-4 mr-2" />
-                Timer
-              </TabsTrigger>
-              <TabsTrigger value="esp32" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
-                <Cpu className="w-4 h-4 mr-2" />
-                ESP32
-              </TabsTrigger>
-            </TabsList>
+            <div className="w-full overflow-x-auto pb-2 -mb-2 hide-scrollbar">
+              <TabsList className={`${theme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-200/50 border-slate-300'} backdrop-blur-md border p-1 rounded-xl inline-flex min-w-max h-auto`}>
+                <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 whitespace-nowrap">
+                  <Home className="w-4 h-4 mr-2" />
+                  Dashboard
+                </TabsTrigger>
+                <TabsTrigger value="stats" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 whitespace-nowrap">
+                  <BarChart3 className="w-4 h-4 mr-2" />
+                  Stats
+                </TabsTrigger>
+                <TabsTrigger value="timer" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 whitespace-nowrap">
+                  <Clock className="w-4 h-4 mr-2" />
+                  Timer
+                </TabsTrigger>
+                <TabsTrigger value="esp32" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 whitespace-nowrap">
+                  <Cpu className="w-4 h-4 mr-2" />
+                  ESP32
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
             <TabsContent value="dashboard" className="space-y-8">
               <DashboardView theme={theme} setTheme={setTheme} config={config} />
@@ -529,15 +531,13 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
         state: !currentState
       });
 
-      setTimeout(() => {
-        setSyncMessage("Command sent! Waiting for ESP32...");
-        setTimeout(() => setSyncMessage(null), 2000);
-        setPendingIds(prev => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, 1500);
+      // Remove artificial delay for better responsiveness
+      setSyncMessage(null);
+      setPendingIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     } catch (error) {
       console.error("Error updating switch:", error);
       setSyncMessage("Error sending command.");
@@ -546,6 +546,7 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
         next.delete(id);
         return next;
       });
+      setTimeout(() => setSyncMessage(null), 2000);
     }
   };
 
@@ -573,13 +574,11 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
         state: false
       });
 
-      setTimeout(() => {
-        setSyncMessage("All devices turned off!");
-        setTimeout(() => setSyncMessage(null), 2000);
-      }, 1000);
+      setSyncMessage(null);
     } catch (error) {
       console.error("Error in All Off:", error);
       setSyncMessage("Error during shutdown.");
+      setTimeout(() => setSyncMessage(null), 2000);
     }
   };
 
@@ -607,13 +606,11 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
         state: true
       });
 
-      setTimeout(() => {
-        setSyncMessage("All devices turned on!");
-        setTimeout(() => setSyncMessage(null), 2000);
-      }, 1000);
+      setSyncMessage(null);
     } catch (error) {
       console.error("Error in All On:", error);
       setSyncMessage("Error during power up.");
+      setTimeout(() => setSyncMessage(null), 2000);
     }
   };
 
