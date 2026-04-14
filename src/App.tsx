@@ -7,17 +7,32 @@ import { Power, Lightbulb, Zap, Copy, Check, Server, Activity, Lock, LogOut, Che
 const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
 const TOPIC_COMMAND = 'smartswitch/rudransh/b106/commands';
 const TOPIC_STATE = 'smartswitch/rudransh/b106/state';
+const TOPIC_LOCK = 'smartswitch/rudransh/b106/lock';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [states, setStates] = useState<boolean[]>([false, false, false, false]);
   const [client, setClient] = useState<mqtt.MqttClient | null>(null);
   const [mqttStatus, setMqttStatus] = useState('INITIALIZING CONNECTION...');
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockTimeLeft, setLockTimeLeft] = useState(0);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
     document.documentElement.style.backgroundColor = '#020617'; // slate-950
   }, []);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (isLocked && lockTimeLeft > 0) {
+      timer = setInterval(() => {
+        setLockTimeLeft(prev => prev - 1);
+      }, 1000);
+    } else if (lockTimeLeft === 0) {
+      setIsLocked(false);
+    }
+    return () => clearInterval(timer);
+  }, [isLocked, lockTimeLeft]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -35,7 +50,7 @@ export default function App() {
     mqttClient.on('connect', () => {
       if (!isMounted) return;
       setMqttStatus('SECURE CONNECTION ESTABLISHED');
-      mqttClient.subscribe(TOPIC_STATE);
+      mqttClient.subscribe([TOPIC_STATE, TOPIC_LOCK]);
     });
 
     mqttClient.on('reconnect', () => {
@@ -52,11 +67,24 @@ export default function App() {
 
     mqttClient.on('message', (topic, message) => {
       if (!isMounted) return;
+      if (topic === TOPIC_LOCK) {
+        if (message.toString() === '1') {
+          setIsLocked(true);
+          setLockTimeLeft(10);
+        }
+      }
       if (topic === TOPIC_STATE) {
         try {
-          const newStates = JSON.parse(message.toString());
-          if (Array.isArray(newStates) && newStates.length === 4) {
-            setStates(newStates);
+          const msg = message.toString();
+          if (msg.length >= 4 && (msg[0] === '0' || msg[0] === '1')) {
+            // New ultra-robust 4-byte protocol
+            setStates([msg[0] === '1', msg[1] === '1', msg[2] === '1', msg[3] === '1']);
+          } else {
+            // Fallback for old JSON format
+            const newStates = JSON.parse(msg);
+            if (Array.isArray(newStates) && newStates.length === 4) {
+              setStates(newStates);
+            }
           }
         } catch (e) {
           console.error("Invalid message format");
@@ -72,28 +100,51 @@ export default function App() {
     };
   }, [isAuthenticated]);
 
+  const isCooldown = React.useRef(false);
+
+  const triggerCooldown = () => {
+    isCooldown.current = true;
+    setTimeout(() => { isCooldown.current = false; }, 500);
+  };
+
   const toggleSwitch = (index: number) => {
+    if (isLocked) return;
+    if (isCooldown.current) return;
+    triggerCooldown();
+
     const newStates = [...states];
     newStates[index] = !newStates[index];
     setStates(newStates);
     if (client && client.connected) {
-      client.publish(TOPIC_COMMAND, JSON.stringify(newStates));
+      client.publish(TOPIC_LOCK, "1");
+      const payload = newStates.map(s => s ? '1' : '0').join('');
+      client.publish(TOPIC_COMMAND, payload);
     }
   };
 
   const allOn = () => {
+    if (isLocked) return;
+    if (isCooldown.current) return;
+    triggerCooldown();
+
     const newStates = [true, true, true, true];
     setStates(newStates);
     if (client && client.connected) {
-      client.publish(TOPIC_COMMAND, JSON.stringify(newStates));
+      client.publish(TOPIC_LOCK, "1");
+      client.publish(TOPIC_COMMAND, "1111");
     }
   };
 
   const allOff = () => {
+    if (isLocked) return;
+    if (isCooldown.current) return;
+    triggerCooldown();
+
     const newStates = [false, false, false, false];
     setStates(newStates);
     if (client && client.connected) {
-      client.publish(TOPIC_COMMAND, JSON.stringify(newStates));
+      client.publish(TOPIC_LOCK, "1");
+      client.publish(TOPIC_COMMAND, "0000");
     }
   };
 
@@ -151,6 +202,8 @@ export default function App() {
               allOn={allOn} 
               allOff={allOff}
               mqttStatus={mqttStatus}
+              isLocked={isLocked}
+              lockTimeLeft={lockTimeLeft}
             />
           )}
         </AnimatePresence>
@@ -254,6 +307,8 @@ interface DashboardViewProps {
   allOn: () => void;
   allOff: () => void;
   mqttStatus: string;
+  isLocked: boolean;
+  lockTimeLeft: number;
 }
 
 const DashboardView: React.FC<DashboardViewProps> = ({ 
@@ -261,7 +316,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   toggleSwitch, 
   allOn, 
   allOff,
-  mqttStatus
+  mqttStatus,
+  isLocked,
+  lockTimeLeft
 }) => {
   const switchNames = ['Bulb 1', 'Bulb 2', 'Plug 1', 'Plug 2'];
   const switchTypes = ['bulb', 'bulb', 'plug', 'plug'];
@@ -311,8 +368,18 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </header>
 
-      {/* Global Controls */}
-      <div className="flex flex-wrap gap-4 mb-10">
+      <div className="relative">
+        {isLocked && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-sm rounded-3xl border border-cyan-500/30">
+            <div className="w-16 h-16 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-6"></div>
+            <h3 className="text-2xl font-black tracking-widest text-cyan-400 mb-2">HARDWARE SYNCING</h3>
+            <p className="text-sm font-mono text-slate-300">PLEASE WAIT // {lockTimeLeft}s</p>
+          </div>
+        )}
+        
+        <div className={`transition-all duration-500 ${isLocked ? 'opacity-30 pointer-events-none blur-sm' : ''}`}>
+          {/* Global Controls */}
+          <div className="flex flex-wrap gap-4 mb-10">
         <button 
           onClick={allOn}
           className="flex items-center gap-2 px-6 py-3 bg-white text-slate-900 hover:bg-slate-200 rounded-lg text-xs font-black tracking-[0.2em] transition-colors"
@@ -374,6 +441,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           </motion.div>
         ))}
       </motion.div>
+      </div>
+      </div>
 
       {/* Firmware Section */}
       <motion.div 
@@ -396,6 +465,8 @@ function ESP32SetupView() {
 // Requires: PubSubClient by Nick O'Leary
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 const char* ssid = "B-BLOCK";
 const char* password = "welcome$ABH";
@@ -412,6 +483,8 @@ PubSubClient client(espClient);
 const int relayPins[4] = {26, 27, 14, 12}; 
 bool relayState[4] = {HIGH, HIGH, HIGH, HIGH};
 
+volatile bool stateChanged = false;
+
 void setup_wifi() {
   delay(10);
   Serial.println();
@@ -423,38 +496,41 @@ void setup_wifi() {
   delay(100);
   
   WiFi.begin(ssid, password);
+  int wifiRetries = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    wifiRetries++;
+    if (wifiRetries > 10) {
+      Serial.println("\\n[FATAL] WiFi failed. REBOOTING IMMEDIATELY...");
+      delay(500);
+      ESP.restart();
+    }
   }
   Serial.println("\\nWiFi connected");
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  char msg[length + 1];
-  for (int i = 0; i < length; i++) {
-    msg[i] = (char)payload[i];
-  }
-  msg[length] = '\\0';
+  // ULTRA-ROBUST PROTOCOL: We only expect exactly 4 bytes (e.g. "1010")
+  if (length < 4) return;
   
-  Serial.print("Received: ");
-  Serial.println(msg);
-  
-  int pinIndex = 0;
-  for (int i = 0; i < length && pinIndex < 4; i++) {
-    if (msg[i] == 't') {
-      relayState[pinIndex] = LOW;
-      digitalWrite(relayPins[pinIndex], LOW);
-      pinIndex++;
-      i += 3;
-    } else if (msg[i] == 'f') {
-      relayState[pinIndex] = HIGH;
-      digitalWrite(relayPins[pinIndex], HIGH);
-      pinIndex++;
-      i += 4;
+  for (int i = 0; i < 4; i++) {
+    if (payload[i] == '1') {
+      if (relayState[i] != LOW) {
+        relayState[i] = LOW;
+        digitalWrite(relayPins[i], LOW);
+        delay(20); // Stagger relays
+      }
+    } else if (payload[i] == '0') {
+      if (relayState[i] != HIGH) {
+        relayState[i] = HIGH;
+        digitalWrite(relayPins[i], HIGH);
+        delay(20); // Stagger relays
+      }
     }
   }
-  client.publish(topic_state, msg);
+  
+  stateChanged = true;
 }
 
 void reconnect() {
@@ -466,33 +542,64 @@ void reconnect() {
     if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       client.subscribe(topic_command);
-      client.publish(topic_state, "[false,false,false,false]");
+      
+      // Publish initial state
+      char stateStr[5];
+      for(int i=0; i<4; i++) {
+        stateStr[i] = (relayState[i] == LOW) ? '1' : '0';
+      }
+      stateStr[4] = '\\0';
+      client.publish(topic_state, stateStr);
+      
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
+      Serial.println(" -> [FATAL] MQTT LOST. REBOOTING IMMEDIATELY...");
+      delay(500);
+      ESP.restart();
     }
   }
 }
 
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout
+
   Serial.begin(115200);
   for(int i=0; i<4; i++) {
     pinMode(relayPins[i], OUTPUT);
     digitalWrite(relayPins[i], relayState[i]);
   }
   setup_wifi();
-  client.setBufferSize(512); 
+  client.setBufferSize(256); 
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
 }
 
 void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\\n[FATAL] WiFi connection lost during operation. REBOOTING IMMEDIATELY...");
+    delay(500);
+    ESP.restart();
+  }
+
   if (!client.connected()) {
     reconnect();
   }
   client.loop();
+  
+  if (stateChanged) {
+    char stateStr[5];
+    for(int i=0; i<4; i++) {
+      stateStr[i] = (relayState[i] == LOW) ? '1' : '0';
+    }
+    stateStr[4] = '\\0';
+    
+    Serial.print("Publishing new state: ");
+    Serial.println(stateStr);
+    client.publish(topic_state, stateStr);
+    stateChanged = false;
+  }
+  
   yield();
 }
 `;
