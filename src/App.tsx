@@ -1,22 +1,21 @@
 import { useState, useEffect, FormEvent } from 'react';
+import mqtt from 'mqtt';
 import { useAuthState } from 'react-firebase-hooks/auth';
-import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
-import { collection, doc, updateDoc, setDoc } from 'firebase/firestore';
+import { useDocument } from 'react-firebase-hooks/firestore';
+import { doc } from 'firebase/firestore';
 import { auth, db, loginWithEmail, signOut } from './firebase';
 import { motion, AnimatePresence } from 'motion/react';
-import { Power, Lightbulb, Zap, LogOut } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Power, Lightbulb, Zap, LogOut, Copy, Check } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-interface SwitchData {
-  id: string;
-  name: string;
-  state: boolean;
-  type: 'bulb' | 'plug';
-}
+// Using HiveMQ public broker for reliable global access
+const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
+const TOPIC_COMMAND = 'smartswitch/rudransh/b106/commands';
+const TOPIC_STATE = 'smartswitch/rudransh/b106/state';
 
 interface UserConfig {
   roomNumber: string;
@@ -31,10 +30,95 @@ export default function App() {
   const [configValue] = useDocument(doc(db, 'config', 'user'));
   const config = configValue?.data() as UserConfig | undefined;
 
+  const [states, setStates] = useState<boolean[]>([false, false, false, false]);
+  const [client, setClient] = useState<mqtt.MqttClient | null>(null);
+  const [mqttStatus, setMqttStatus] = useState('Connecting to Global Server...');
+
   useEffect(() => {
     document.documentElement.classList.remove('light', 'dark');
     document.documentElement.classList.add(theme);
   }, [theme]);
+
+  useEffect(() => {
+    let isMounted = true;
+    
+    // Connect to MQTT Broker via Secure WebSockets
+    const mqttClient = mqtt.connect(BROKER_URL, {
+      clientId: 'webapp_' + Math.random().toString(16).substring(2, 10),
+      clean: true,
+      connectTimeout: 5000,
+      reconnectPeriod: 2000,
+      keepalive: 60,
+    });
+
+    mqttClient.on('connect', () => {
+      if (!isMounted) return;
+      setMqttStatus('🟢 Connected to Global Server (Instant Latency)');
+      mqttClient.subscribe(TOPIC_STATE);
+    });
+
+    mqttClient.on('reconnect', () => {
+      if (!isMounted) return;
+      setMqttStatus('🟡 Reconnecting...');
+    });
+
+    mqttClient.on('error', (err) => {
+      if (!isMounted) return;
+      if (err.message === 'client disconnecting') return;
+      setMqttStatus('🔴 Connection Error');
+      console.error('MQTT Error:', err);
+    });
+
+    mqttClient.on('message', (topic, message) => {
+      if (!isMounted) return;
+      if (topic === TOPIC_STATE) {
+        try {
+          const newStates = JSON.parse(message.toString());
+          if (Array.isArray(newStates) && newStates.length === 4) {
+            setStates(newStates);
+          }
+        } catch (e) {
+          console.error("Invalid message format");
+        }
+      }
+    });
+
+    setClient(mqttClient);
+
+    return () => {
+      isMounted = false;
+      mqttClient.end(true);
+    };
+  }, []);
+
+  const toggleSwitch = (index: number) => {
+    const newStates = [...states];
+    newStates[index] = !newStates[index];
+    
+    // 1. Optimistic UI update (Instant for the user)
+    setStates(newStates);
+
+    // 2. Publish command instantly to the world
+    if (client && client.connected) {
+      client.publish(TOPIC_COMMAND, JSON.stringify(newStates));
+    }
+  };
+
+  const allOn = () => {
+    const newStates = [true, true, true, true];
+    setStates(newStates);
+    if (client && client.connected) {
+      client.publish(TOPIC_COMMAND, JSON.stringify(newStates));
+    }
+  };
+
+  const allOff = () => {
+    const newStates = [false, false, false, false];
+    setStates(newStates);
+    if (client && client.connected) {
+      client.publish(TOPIC_COMMAND, JSON.stringify(newStates));
+    }
+  };
 
   if (authLoading) {
     return <div className="min-h-screen bg-[#020617] flex items-center justify-center"><Zap className="w-8 h-8 text-cyan-500 animate-pulse" /></div>;
@@ -77,7 +161,18 @@ export default function App() {
         </header>
 
         {user ? (
-          <DashboardView theme={theme} setTheme={setTheme} />
+          <div className="space-y-12">
+            <DashboardView 
+              theme={theme} 
+              setTheme={setTheme} 
+              states={states} 
+              toggleSwitch={toggleSwitch} 
+              allOn={allOn} 
+              allOff={allOff}
+              mqttStatus={mqttStatus}
+            />
+            <ESP32SetupView theme={theme} />
+          </div>
         ) : (
           <AuthView theme={theme} config={config} />
         )}
@@ -171,59 +266,34 @@ function AuthView({ theme, config }: { theme: 'dark' | 'light', config?: UserCon
   );
 }
 
-function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 'dark' | 'light') => void }) {
-  const [switchesValue] = useCollection(collection(db, 'switches'));
-  const switches = switchesValue?.docs.map(d => ({ id: d.id, ...d.data() } as SwitchData)) || [];
-
-  // Initialize switches if they don't exist
-  useEffect(() => {
-    if (switchesValue && switches.length === 0) {
-      const initialSwitches: SwitchData[] = [
-        { id: '0', name: 'Bulb 1', state: false, type: 'bulb' },
-        { id: '1', name: 'Bulb 2', state: false, type: 'bulb' },
-        { id: '2', name: 'Plug 1', state: false, type: 'plug' },
-        { id: '3', name: 'Plug 2', state: false, type: 'plug' },
-      ];
-      initialSwitches.forEach(s => {
-        setDoc(doc(db, 'switches', s.id), s);
-      });
-    }
-  }, [switchesValue, switches.length]);
-
-  // Master Sync Engine: Keeps status/sync document updated for the ESP32
-  const switchStatesStr = switches.map(s => s.state).join(',');
-  useEffect(() => {
-    if (switches.length === 4) {
-      const states = switches.sort((a, b) => a.id.localeCompare(b.id)).map(s => s.state);
-      setDoc(doc(db, 'status', 'sync'), { states }, { merge: true }).catch(console.error);
-    }
-  }, [switchStatesStr]);
-
-  const toggleSwitch = (id: string, currentState: boolean) => {
-    const newState = !currentState;
-    
-    // Optimistic update via Firestore
-    updateDoc(doc(db, 'switches', id), { state: newState }).catch(console.error);
-
-    // Immediately update sync to prevent ESP32 from reverting state
-    if (switches.length === 4) {
-      const newStates = switches.sort((a, b) => a.id.localeCompare(b.id)).map(s => s.id === id ? newState : s.state);
-      setDoc(doc(db, 'status', 'sync'), { states: newStates }, { merge: true }).catch(console.error);
-    }
-  };
-
-  const allOff = () => {
-    switches.forEach(s => updateDoc(doc(db, 'switches', s.id), { state: false }).catch(console.error));
-    setDoc(doc(db, 'status', 'sync'), { states: [false, false, false, false] }, { merge: true }).catch(console.error);
-  };
-
-  const allOn = () => {
-    switches.forEach(s => updateDoc(doc(db, 'switches', s.id), { state: true }).catch(console.error));
-    setDoc(doc(db, 'status', 'sync'), { states: [true, true, true, true] }, { merge: true }).catch(console.error);
-  };
+function DashboardView({ 
+  theme, 
+  setTheme, 
+  states, 
+  toggleSwitch, 
+  allOn, 
+  allOff,
+  mqttStatus
+}: { 
+  theme: 'dark' | 'light', 
+  setTheme: (t: 'dark' | 'light') => void,
+  states: boolean[],
+  toggleSwitch: (index: number) => void,
+  allOn: () => void,
+  allOff: () => void,
+  mqttStatus: string
+}) {
+  const switchNames = ['Bulb 1', 'Bulb 2', 'Plug 1', 'Plug 2'];
+  const switchTypes = ['bulb', 'bulb', 'plug', 'plug'];
 
   return (
     <div className="space-y-8">
+      <div className="flex justify-center mb-2">
+        <div className={`text-[10px] font-bold px-3 py-1.5 rounded-full tracking-widest uppercase ${mqttStatus.includes('Connected') ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
+          {mqttStatus}
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         <Button 
           onClick={allOn}
@@ -241,25 +311,25 @@ function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme:
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <AnimatePresence>
-          {switches.sort((a, b) => a.id.localeCompare(b.id)).map((s) => (
-            <motion.div key={s.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}>
-              <Card className={`relative overflow-hidden transition-all duration-300 ${theme === 'dark' ? 'border-slate-800' : 'border-slate-200 shadow-sm'} ${s.state ? 'bg-cyan-500/10 ring-1 ring-cyan-500/30' : (theme === 'dark' ? 'bg-slate-900/40' : 'bg-white')}`}>
-                {s.state && <div className="absolute -top-10 -right-10 w-32 h-32 bg-cyan-500/20 blur-[40px] rounded-full pointer-events-none" />}
+          {states.map((state, index) => (
+            <motion.div key={index} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}>
+              <Card className={`relative overflow-hidden transition-all duration-300 ${theme === 'dark' ? 'border-slate-800' : 'border-slate-200 shadow-sm'} ${state ? 'bg-cyan-500/10 ring-1 ring-cyan-500/30' : (theme === 'dark' ? 'bg-slate-900/40' : 'bg-white')}`}>
+                {state && <div className="absolute -top-10 -right-10 w-32 h-32 bg-cyan-500/20 blur-[40px] rounded-full pointer-events-none" />}
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between mb-8">
-                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors duration-300 ${s.state ? 'bg-cyan-500 text-white shadow-[0_0_20px_rgba(6,182,212,0.5)]' : (theme === 'dark' ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400')}`}>
-                      {s.type === 'bulb' ? <Lightbulb className="w-7 h-7" /> : <Zap className="w-7 h-7" />}
+                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors duration-300 ${state ? 'bg-cyan-500 text-white shadow-[0_0_20px_rgba(6,182,212,0.5)]' : (theme === 'dark' ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400')}`}>
+                      {switchTypes[index] === 'bulb' ? <Lightbulb className="w-7 h-7" /> : <Zap className="w-7 h-7" />}
                     </div>
                     <Switch 
-                      checked={s.state} 
-                      onCheckedChange={() => toggleSwitch(s.id, s.state)}
+                      checked={state} 
+                      onCheckedChange={() => toggleSwitch(index)}
                       className="data-[state=checked]:bg-cyan-500"
                     />
                   </div>
                   <div>
-                    <h3 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{s.name}</h3>
-                    <p className={`text-sm font-medium transition-colors duration-300 ${s.state ? 'text-cyan-500' : (theme === 'dark' ? 'text-slate-500' : 'text-slate-600')}`}>
-                      {s.state ? 'ACTIVE' : 'INACTIVE'}
+                    <h3 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{switchNames[index]}</h3>
+                    <p className={`text-sm font-medium transition-colors duration-300 ${state ? 'text-cyan-500' : (theme === 'dark' ? 'text-slate-500' : 'text-slate-600')}`}>
+                      {state ? 'ACTIVE' : 'INACTIVE'}
                     </p>
                   </div>
                 </CardContent>
@@ -279,6 +349,147 @@ function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme:
           {theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ESP32SetupView({ theme }: { theme: 'dark' | 'light' }) {
+  const [copied, setCopied] = useState(false);
+  
+  const espCode = `// --- SmartSwitch MQTT (INSTANT GLOBAL CONTROL) ---
+// ⚡ Requires: PubSubClient library by Nick O'Leary
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+const char* ssid = "B-BLOCK";
+const char* password = "welcome$ABH";
+
+// HiveMQ Public Broker
+const char* mqtt_server = "broker.hivemq.com";
+const int mqtt_port = 1883;
+
+const char* topic_command = "smartswitch/rudransh/b106/commands";
+const char* topic_state = "smartswitch/rudransh/b106/state";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const int relayPins[4] = {26, 27, 14, 12}; 
+bool relayState[4] = {HIGH, HIGH, HIGH, HIGH}; // HIGH is OFF for active-low relays
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\\nWiFi connected");
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  // Create a temporary character array (Zero heap memory used!)
+  char msg[length + 1];
+  for (int i = 0; i < length; i++) {
+    msg[i] = (char)payload[i];
+  }
+  msg[length] = '\\0'; // Null terminator
+  
+  Serial.print("Received: ");
+  Serial.println(msg);
+  
+  // Lightning-fast parsing without String objects
+  int pinIndex = 0;
+  for (int i = 0; i < length && pinIndex < 4; i++) {
+    if (msg[i] == 't') { // "true"
+      relayState[pinIndex] = LOW; // Turn ON
+      digitalWrite(relayPins[pinIndex], LOW);
+      pinIndex++;
+      i += 3; // skip the rest of "true"
+    } else if (msg[i] == 'f') { // "false"
+      relayState[pinIndex] = HIGH; // Turn OFF
+      digitalWrite(relayPins[pinIndex], HIGH);
+      pinIndex++;
+      i += 4; // skip the rest of "false"
+    }
+  }
+  
+  // Acknowledge state
+  client.publish(topic_state, msg);
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX);
+    
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      client.subscribe(topic_command);
+      
+      // Publish initial state
+      client.publish(topic_state, "[false,false,false,false]");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200); // Make sure your Serial Monitor is set to 115200 baud!
+  for(int i=0; i<4; i++) {
+    pinMode(relayPins[i], OUTPUT);
+    digitalWrite(relayPins[i], relayState[i]);
+  }
+  setup_wifi();
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+}
+`;
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(espCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card className={`${theme === 'dark' ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} backdrop-blur-xl transition-colors duration-500`}>
+        <CardHeader>
+          <CardTitle>ESP32 Firmware Guide</CardTitle>
+          <CardDescription className={theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}>Flash this code for instant global control via MQTT</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="relative group">
+            <div className="absolute top-4 right-4 z-20">
+              <Button onClick={copyCode} variant="secondary" size="sm" className={`${theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'} gap-2`}>
+                {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                {copied ? 'Copied!' : 'Copy Code'}
+              </Button>
+            </div>
+            <div className={`${theme === 'dark' ? 'bg-[#020617] border-slate-800' : 'bg-slate-900 border-slate-700'} rounded-2xl border p-6 overflow-x-auto max-h-[400px] scrollbar-thin scrollbar-thumb-slate-800`}>
+              <pre className="text-xs font-mono text-cyan-400/80 leading-relaxed">
+                {espCode}
+              </pre>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
