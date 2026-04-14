@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "Switch": {
+      "title": "Switch",
+      "description": "Represents a physical switch (bulb or plug)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Index of the switch (0-3)" },
+        "name": { "type": "string", "description": "Display name of the switch" },
+        "state": { "type": "boolean", "description": "Current state (true for ON, false for OFF)" },
+        "type": { "type": "string", "enum": ["bulb", "plug"], "description": "Type of appliance" },
+        "lastUpdated": { "type": "string", "format": "date-time", "description": "Last time the state was changed" }
+      },
+      "required": ["id", "state", "lastUpdated"]
+    },
+    "DeviceStatus": {
+      "title": "DeviceStatus",
+      "description": "Status of the ESP32 device",
+      "type": "object",
+      "properties": {
+        "online": { "type": "boolean", "description": "Whether the device is connected to the cloud" },
+        "lastSeen": { "type": "string", "format": "date-time", "description": "Last heartbeat from the device" },
+        "localIp": { "type": "string", "description": "Local IP address of the device" }
+      },
+      "required": ["online", "lastSeen"]
+    }
+  },
+  "firestore": {
+    "/switches/{switchId}": {
+      "schema": "Switch",
+      "description": "Collection of smart switches"
+    },
+    "/status/esp32": {
+      "schema": "DeviceStatus",
+      "description": "Real-time status of the ESP32"
+    }
+  }
+}

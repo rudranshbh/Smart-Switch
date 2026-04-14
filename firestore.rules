@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "rudranshbhardwaj2401@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /switches/{switchId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /status/esp32 {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /status/sync {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
