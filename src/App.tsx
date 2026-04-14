@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, useRef } from 'react';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { useCollection, useDocument } from 'react-firebase-hooks/firestore';
 import { collection, doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
@@ -399,14 +399,24 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
   const timers = timersValue?.docs.map(d => ({ id: d.id, ...d.data() } as TimerData)) || [];
 
   // Timer Execution Engine
+  const timersRef = useRef(timers);
+  const switchesRef = useRef(switches);
+
+  useEffect(() => {
+    timersRef.current = timers;
+    switchesRef.current = switches;
+  }, [timers, switches]);
+
   useEffect(() => {
     const interval = setInterval(() => {
+      const currentTimers = timersRef.current;
+      const currentSwitches = switchesRef.current;
       const now = new Date();
       const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
       
-      timers.forEach(async (timer) => {
+      currentTimers.forEach(async (timer) => {
         if (timer.active && timer.targetTime === currentTime) {
-          const sw = switches.find(s => s.id === timer.switchId);
+          const sw = currentSwitches.find(s => s.id === timer.switchId);
           if (sw && sw.state !== timer.action) {
             console.log(`Executing timer for ${sw.name}: turning ${timer.action ? 'ON' : 'OFF'}`);
             
@@ -415,6 +425,13 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
               state: timer.action,
               lastUpdated: serverTimestamp()
             });
+
+            // Update MASTER sync document for ESP32
+            const newStates = currentSwitches.sort((a, b) => a.id.localeCompare(b.id)).map(s => s.id === timer.switchId ? timer.action : s.state);
+            await setDoc(doc(db, 'status', 'sync'), {
+              states: newStates,
+              lastUpdated: serverTimestamp()
+            }, { merge: true });
 
             // Deactivate timer to prevent multiple triggers in the same minute
             await updateDoc(doc(db, 'timers', timer.id), {
@@ -434,7 +451,7 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
     }, 10000); // Check every 10 seconds
 
     return () => clearInterval(interval);
-  }, [timers, switches]);
+  }, []);
 
   // Clear pending state when cloud matches local intent
   useEffect(() => {
@@ -477,6 +494,7 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
   }, [switchesLoading, switches.length, statusLoading, statusValue]);
 
   // Master Sync Engine: Keeps status/sync document updated for the ESP32
+  const switchStatesStr = switches.map(s => s.state).join(',');
   useEffect(() => {
     if (switches.length > 0) {
       const states = switches.sort((a, b) => a.id.localeCompare(b.id)).map(s => s.state);
@@ -485,7 +503,7 @@ function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', s
         lastUpdated: serverTimestamp()
       }, { merge: true });
     }
-  }, [switches]);
+  }, [switchStatesStr]); // Only trigger when states actually change, not on every render
 
   const toggleSwitch = async (id: string, currentState: boolean) => {
     try {
