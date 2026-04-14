@@ -449,6 +449,10 @@ void setup() {
     digitalWrite(relayPins[i], relayState[i]);
   }
   setup_wifi();
+  
+  // CRITICAL FIX: Increase buffer size to prevent memory corruption
+  client.setBufferSize(512); 
+  
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
 }
@@ -458,6 +462,7 @@ void loop() {
     reconnect();
   }
   client.loop();
+  yield(); // CRITICAL FIX: Give WiFi stack time to process to prevent watchdog resets
 }
 `;
 
