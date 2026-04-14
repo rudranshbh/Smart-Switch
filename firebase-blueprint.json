@@ -20,9 +20,45 @@
       "properties": {
         "online": { "type": "boolean", "description": "Whether the device is connected to the cloud" },
         "lastSeen": { "type": "string", "format": "date-time", "description": "Last heartbeat from the device" },
+        "lastActivity": { "type": "string", "format": "date-time", "description": "Last user interaction time" },
         "localIp": { "type": "string", "description": "Local IP address of the device" }
       },
       "required": ["online", "lastSeen"]
+    },
+    "UserConfig": {
+      "title": "UserConfig",
+      "description": "Owner configuration and credentials",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "roomNumber": { "type": "string" },
+        "name1": { "type": "string" },
+        "name2": { "type": "string" },
+        "profilePic": { "type": "string" }
+      }
+    },
+    "Log": {
+      "title": "Log",
+      "description": "Activity log entry",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time" },
+        "action": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "state": { "type": "boolean" }
+      }
+    },
+    "Timer": {
+      "title": "Timer",
+      "description": "Scheduled switch action",
+      "type": "object",
+      "properties": {
+        "switchId": { "type": "string" },
+        "targetTime": { "type": "string", "format": "date-time" },
+        "action": { "type": "boolean" },
+        "active": { "type": "boolean" }
+      }
     }
   },
   "firestore": {
@@ -33,6 +69,18 @@
     "/status/esp32": {
       "schema": "DeviceStatus",
       "description": "Real-time status of the ESP32"
+    },
+    "/config/user": {
+      "schema": "UserConfig",
+      "description": "Owner profile and credentials"
+    },
+    "/logs/{logId}": {
+      "schema": "Log",
+      "description": "History of device actions"
+    },
+    "/timers/{timerId}": {
+      "schema": "Timer",
+      "description": "Scheduled tasks"
     }
   }
 }

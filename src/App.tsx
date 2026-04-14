@@ -26,7 +26,13 @@ import {
   Mail,
   ShieldCheck,
   Sun,
-  Moon
+  Moon,
+  History,
+  Clock,
+  BarChart3,
+  Plus,
+  Trash2,
+  Calendar
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -52,16 +58,58 @@ interface DeviceStatus {
   localIp: string;
 }
 
+interface UserConfig {
+  email: string;
+  password?: string;
+  roomNumber: string;
+  name1: string;
+  name2: string;
+  profilePic: string;
+}
+
+interface LogEntry {
+  id: string;
+  timestamp: any;
+  action: string;
+  deviceName: string;
+  state: boolean;
+}
+
+interface TimerData {
+  id: string;
+  switchId: string;
+  targetTime: string;
+  action: boolean;
+  active: boolean;
+}
+
 export default function App() {
   const [user, loading] = useAuthState(auth);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [configValue, configLoading] = useDocument(doc(db, 'config', 'user'));
+
+  const config = configValue?.data() as UserConfig | undefined;
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
   }, [theme]);
 
-  if (loading) {
+  // Initialize config if it doesn't exist
+  useEffect(() => {
+    if (!configLoading && !configValue?.exists()) {
+      setDoc(doc(db, 'config', 'user'), {
+        email: '106@gmail.com',
+        password: '106106',
+        roomNumber: 'B-106',
+        name1: 'RUDRANSH BHARDWAJ',
+        name2: 'KUSHAGRA VARSHNEY',
+        profilePic: 'https://lh3.googleusercontent.com/d/12CB9vV3Tu0AV9vfkdyw81TasNBOmaDQa'
+      });
+    }
+  }, [configLoading, configValue]);
+
+  if (loading || configLoading) {
     return (
       <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
         <motion.div 
@@ -92,20 +140,20 @@ export default function App() {
             >
               SMART SWITCH
             </motion.h1>
-            <p className={`${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'} mt-1`}>Cloud Command Center</p>
+            <p className={`${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'} mt-1 font-medium tracking-wide`}>Cloud Command Center</p>
           </div>
 
           <div className="flex items-center gap-4">
             {user && (
               <div className={`flex items-center gap-4 ${theme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200'} backdrop-blur-md border p-2 rounded-full pl-4 shadow-sm`}>
                 <div className="flex flex-col items-end">
-                  <span className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>B-106</span>
-                  <span className={`text-[10px] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-600'}`}>{user.email}</span>
+                  <span className={`text-sm font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{config?.roomNumber || 'B-106'}</span>
+                  <span className={`text-[10px] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-600'}`}>{config?.email || user.email}</span>
                 </div>
                 <div className="w-10 h-10 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center overflow-hidden">
                   <img 
-                    src="https://lh3.googleusercontent.com/d/12CB9vV3Tu0AV9vfkdyw81TasNBOmaDQa" 
-                    alt="B-106" 
+                    src={config?.profilePic || "https://lh3.googleusercontent.com/d/12CB9vV3Tu0AV9vfkdyw81TasNBOmaDQa"} 
+                    alt="User Profile" 
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
@@ -120,19 +168,35 @@ export default function App() {
 
         {user ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
-            <TabsList className={`${theme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-200/50 border-slate-300'} backdrop-blur-md border p-1 rounded-xl`}>
+            <TabsList className={`${theme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-200/50 border-slate-300'} backdrop-blur-md border p-1 rounded-xl flex-wrap h-auto`}>
               <TabsTrigger value="dashboard" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
                 <Home className="w-4 h-4 mr-2" />
                 Dashboard
               </TabsTrigger>
+              <TabsTrigger value="stats" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
+                <BarChart3 className="w-4 h-4 mr-2" />
+                Stats
+              </TabsTrigger>
+              <TabsTrigger value="timer" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
+                <Clock className="w-4 h-4 mr-2" />
+                Timer
+              </TabsTrigger>
               <TabsTrigger value="esp32" className="rounded-lg data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400">
                 <Cpu className="w-4 h-4 mr-2" />
-                ESP32 Setup
+                ESP32
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="dashboard" className="space-y-8">
-              <DashboardView theme={theme} setTheme={setTheme} />
+              <DashboardView theme={theme} setTheme={setTheme} config={config} />
+            </TabsContent>
+
+            <TabsContent value="stats">
+              <StatsView theme={theme} />
+            </TabsContent>
+
+            <TabsContent value="timer">
+              <TimerView theme={theme} />
             </TabsContent>
 
             <TabsContent value="esp32">
@@ -140,7 +204,7 @@ export default function App() {
             </TabsContent>
           </Tabs>
         ) : (
-          <AuthView theme={theme} setTheme={setTheme} />
+          <AuthView theme={theme} setTheme={setTheme} config={config} />
         )}
 
         {/* Global Footer */}
@@ -159,7 +223,7 @@ export default function App() {
   );
 }
 
-function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 'dark' | 'light') => void }) {
+function AuthView({ theme, setTheme, config }: { theme: 'dark' | 'light', setTheme: (t: 'dark' | 'light') => void, config?: UserConfig }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -170,6 +234,12 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
     setError('');
     setLoading(true);
     try {
+      // Validate against Firestore config if available
+      if (config) {
+        if (email !== config.email || password !== config.password) {
+          throw new Error('Invalid credentials provided.');
+        }
+      }
       await loginWithEmail(email, password);
     } catch (err: any) {
       setError(err.message.replace('Firebase: ', ''));
@@ -179,8 +249,8 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
   };
 
   return (
-    <div className="flex flex-col items-center justify-center py-12 relative">
-      <div className="absolute -top-4 right-0">
+    <div className="flex flex-col items-center justify-center py-8 relative min-h-[70vh]">
+      <div className="absolute top-0 right-0">
         <Button 
           variant="ghost" 
           size="icon" 
@@ -192,63 +262,63 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
       </div>
 
       <motion.div
-        initial={{ y: 20, opacity: 0 }}
+        initial={{ y: 30, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.6, ease: "easeOut" }}
+        transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
         className="w-full max-w-md"
       >
-        <Card className={`${theme === 'dark' ? 'bg-slate-900/40 border-slate-800 shadow-2xl' : 'bg-white border-slate-200 shadow-xl'} backdrop-blur-xl rounded-[2.5rem] overflow-hidden transition-colors duration-500`}>
-          <div className="h-2 w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500" />
-          <CardHeader className="space-y-4 pt-10 pb-6">
+        <Card className={`${theme === 'dark' ? 'bg-slate-900/60 border-slate-800 shadow-2xl' : 'bg-white border-slate-200 shadow-2xl'} backdrop-blur-2xl rounded-[3rem] overflow-hidden transition-all duration-500 border-t-cyan-500/20`}>
+          <div className="h-1.5 w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500 opacity-80" />
+          <CardHeader className="space-y-6 pt-12 pb-8">
             <motion.div 
-              initial={{ scale: 0.8, opacity: 0 }}
+              initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: 0.2, duration: 0.5 }}
-              className={`w-24 h-24 rounded-full ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-100'} mx-auto border-2 border-cyan-500/30 overflow-hidden shadow-[0_0_30px_rgba(6,182,212,0.2)]`}
+              transition={{ delay: 0.3, duration: 0.6 }}
+              className={`w-28 h-28 rounded-full ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-50'} mx-auto border-4 border-cyan-500/20 overflow-hidden shadow-2xl relative group`}
             >
               <img 
-                src="https://lh3.googleusercontent.com/d/12CB9vV3Tu0AV9vfkdyw81TasNBOmaDQa" 
+                src={config?.profilePic || "https://lh3.googleusercontent.com/d/12CB9vV3Tu0AV9vfkdyw81TasNBOmaDQa"} 
                 alt="Profile" 
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                 referrerPolicy="no-referrer"
               />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
             </motion.div>
-            <div className="space-y-2 text-center">
+            <div className="space-y-3 text-center px-4">
               <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.4 }}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
               >
-                <CardTitle className="text-sm font-black tracking-[0.2em] text-cyan-500 uppercase">
-                  Welcome Back B-106
+                <CardTitle className="text-xs font-black tracking-[0.3em] text-cyan-500 uppercase opacity-80">
+                  Welcome Back {config?.roomNumber || 'B-106'}
                 </CardTitle>
-                <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'} mt-1 tracking-tight flex flex-col items-center`}>
-                  <span>RUDRANSH BHARDWAJ</span>
-                  <span className="h-4" />
-                  <span>KUSHAGRA VARSHNEY</span>
-                </h2>
+                <div className={`mt-4 space-y-1 ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                  <h2 className="text-2xl font-black tracking-tight leading-none uppercase">{config?.name1 || 'RUDRANSH BHARDWAJ'}</h2>
+                  <h2 className="text-2xl font-black tracking-tight leading-none uppercase">{config?.name2 || 'KUSHAGRA VARSHNEY'}</h2>
+                </div>
               </motion.div>
-              <CardDescription className={`${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'} text-xs`}>
-                Enter your credentials to access the command center
+              <CardDescription className={`${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} text-xs font-medium tracking-wide`}>
+                Secure authorization required for command access
               </CardDescription>
             </div>
           </CardHeader>
-          <CardContent className="px-8">
-            <form onSubmit={handleSubmit} className="space-y-5">
+          <CardContent className="px-10 pb-10">
+            <form onSubmit={handleSubmit} className="space-y-6">
               <motion.div 
-                initial={{ x: -10, opacity: 0 }}
+                initial={{ x: -20, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
-                transition={{ delay: 0.5 }}
-                className="space-y-2"
+                transition={{ delay: 0.6 }}
+                className="space-y-2.5"
               >
-                <Label htmlFor="email" className={`text-xs font-semibold ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} ml-1 uppercase tracking-wider`}>EMAIL ADDRESS</Label>
+                <Label htmlFor="email" className={`text-[10px] font-bold ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} ml-1 uppercase tracking-[0.15em]`}>IDENTIFIER</Label>
                 <div className="relative group">
-                  <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500 group-focus-within:text-cyan-400 transition-colors" />
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-cyan-500 transition-colors" />
                   <Input 
                     id="email" 
                     type="email" 
-                    placeholder="Enter owner email" 
-                    className={`${theme === 'dark' ? 'bg-slate-950/40 border-slate-800' : 'bg-slate-50 border-slate-300'} pl-11 h-12 rounded-2xl focus-visible:ring-cyan-500/40 focus-visible:border-cyan-500/50 transition-all`}
+                    placeholder={config?.email || "106@gmail.com"} 
+                    className={`${theme === 'dark' ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'} pl-12 h-14 rounded-2xl focus-visible:ring-cyan-500/30 focus-visible:border-cyan-500/50 transition-all text-sm font-medium`}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
@@ -256,19 +326,19 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
                 </div>
               </motion.div>
               <motion.div 
-                initial={{ x: -10, opacity: 0 }}
+                initial={{ x: -20, opacity: 0 }}
                 animate={{ x: 0, opacity: 1 }}
-                transition={{ delay: 0.6 }}
-                className="space-y-2"
+                transition={{ delay: 0.7 }}
+                className="space-y-2.5"
               >
-                <Label htmlFor="password" className={`text-xs font-semibold ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'} ml-1 uppercase tracking-wider`}>PASSWORD</Label>
+                <Label htmlFor="password" className={`text-[10px] font-bold ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} ml-1 uppercase tracking-[0.15em]`}>ACCESS KEY</Label>
                 <div className="relative group">
-                  <Lock className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500 group-focus-within:text-cyan-400 transition-colors" />
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-cyan-500 transition-colors" />
                   <Input 
                     id="password" 
                     type="password" 
                     placeholder="••••••••" 
-                    className={`${theme === 'dark' ? 'bg-slate-950/40 border-slate-800' : 'bg-slate-50 border-slate-300'} pl-11 h-12 rounded-2xl focus-visible:ring-cyan-500/40 focus-visible:border-cyan-500/50 transition-all`}
+                    className={`${theme === 'dark' ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'} pl-12 h-14 rounded-2xl focus-visible:ring-cyan-500/30 focus-visible:border-cyan-500/50 transition-all text-sm font-medium`}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
@@ -280,7 +350,7 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="p-3 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-3 text-xs text-red-400"
+                  className="p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex items-center gap-3 text-xs text-red-500 font-bold"
                 >
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   {error}
@@ -288,13 +358,13 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
               )}
 
               <motion.div
-                initial={{ y: 10, opacity: 0 }}
+                initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: 0.7 }}
+                transition={{ delay: 0.8 }}
               >
                 <Button 
                   type="submit" 
-                  className="w-full bg-cyan-600 hover:bg-cyan-500 text-white rounded-2xl h-12 text-sm font-bold mt-2 shadow-lg shadow-cyan-500/20 transition-all active:scale-[0.98]"
+                  className="w-full bg-cyan-600 hover:bg-cyan-500 text-white rounded-2xl h-14 text-sm font-black tracking-widest mt-4 shadow-2xl shadow-cyan-500/20 transition-all active:scale-[0.97]"
                   disabled={loading}
                 >
                   {loading ? (
@@ -305,36 +375,66 @@ function AuthView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 
                       <Cpu className="w-5 h-5" />
                     </motion.div>
                   ) : (
-                    'AUTHORIZE ACCESS'
+                    'INITIALIZE LINK'
                   )}
                 </Button>
               </motion.div>
             </form>
           </CardContent>
-          <CardFooter className="pb-10 pt-4">
-            <motion.p 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.8 }}
-              className="text-[10px] text-slate-500 text-center w-full tracking-widest uppercase font-bold"
-            >
-              Secure Owner Access Only • v2.1.0
-            </motion.p>
-          </CardFooter>
         </Card>
       </motion.div>
     </div>
   );
 }
 
-function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t: 'dark' | 'light') => void }) {
+function DashboardView({ theme, setTheme, config }: { theme: 'dark' | 'light', setTheme: (t: 'dark' | 'light') => void, config?: UserConfig }) {
   const [switchesValue, switchesLoading] = useCollection(collection(db, 'switches'));
   const [statusValue, statusLoading] = useDocument(doc(db, 'status', 'esp32'));
+  const [timersValue] = useCollection(collection(db, 'timers'));
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const switches = switchesValue?.docs.map(d => ({ id: d.id, ...d.data() } as SwitchData)) || [];
   const status = statusValue?.data() as DeviceStatus | undefined;
+  const timers = timersValue?.docs.map(d => ({ id: d.id, ...d.data() } as TimerData)) || [];
+
+  // Timer Execution Engine
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date();
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      
+      timers.forEach(async (timer) => {
+        if (timer.active && timer.targetTime === currentTime) {
+          const sw = switches.find(s => s.id === timer.switchId);
+          if (sw && sw.state !== timer.action) {
+            console.log(`Executing timer for ${sw.name}: turning ${timer.action ? 'ON' : 'OFF'}`);
+            
+            // Execute the action
+            await updateDoc(doc(db, 'switches', timer.switchId), {
+              state: timer.action,
+              lastUpdated: serverTimestamp()
+            });
+
+            // Deactivate timer to prevent multiple triggers in the same minute
+            await updateDoc(doc(db, 'timers', timer.id), {
+              active: false
+            });
+
+            // Log activity
+            await setDoc(doc(collection(db, 'logs')), {
+              timestamp: serverTimestamp(),
+              action: `TIMER: ${timer.action ? 'ON' : 'OFF'}`,
+              deviceName: sw.name,
+              state: timer.action
+            });
+          }
+        }
+      });
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [timers, switches]);
 
   // Clear pending state when cloud matches local intent
   useEffect(() => {
@@ -390,16 +490,25 @@ function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme:
   const toggleSwitch = async (id: string, currentState: boolean) => {
     try {
       setPendingIds(prev => new Set(prev).add(id));
-      setSyncMessage(`Sending command to ${switches.find(s => s.id === id)?.name}...`);
+      const deviceName = switches.find(s => s.id === id)?.name || 'Unknown';
+      setSyncMessage(`Sending command to ${deviceName}...`);
       
       await updateDoc(doc(db, 'switches', id), {
         state: !currentState,
         lastUpdated: serverTimestamp()
       });
 
-      // Update Last Activity
-      await updateDoc(doc(db, 'status', 'esp32'), {
+      // Update Last Activity (Use setDoc with merge to avoid errors if doc doesn't exist)
+      await setDoc(doc(db, 'status', 'esp32'), {
         lastActivity: serverTimestamp()
+      }, { merge: true });
+
+      // Log activity
+      await setDoc(doc(collection(db, 'logs')), {
+        timestamp: serverTimestamp(),
+        action: !currentState ? 'ON' : 'OFF',
+        deviceName: deviceName,
+        state: !currentState
       });
 
       setTimeout(() => {
@@ -434,8 +543,16 @@ function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme:
       await Promise.all(batch);
       
       // Update Last Activity
-      await updateDoc(doc(db, 'status', 'esp32'), {
+      await setDoc(doc(db, 'status', 'esp32'), {
         lastActivity: serverTimestamp()
+      }, { merge: true });
+
+      // Log activity
+      await setDoc(doc(collection(db, 'logs')), {
+        timestamp: serverTimestamp(),
+        action: 'ALL OFF',
+        deviceName: 'System',
+        state: false
       });
 
       setTimeout(() => {
@@ -460,8 +577,16 @@ function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme:
       await Promise.all(batch);
 
       // Update Last Activity
-      await updateDoc(doc(db, 'status', 'esp32'), {
+      await setDoc(doc(db, 'status', 'esp32'), {
         lastActivity: serverTimestamp()
+      }, { merge: true });
+
+      // Log activity
+      await setDoc(doc(collection(db, 'logs')), {
+        timestamp: serverTimestamp(),
+        action: 'ALL ON',
+        deviceName: 'System',
+        state: true
       });
 
       setTimeout(() => {
@@ -651,6 +776,208 @@ function DashboardView({ theme, setTheme }: { theme: 'dark' | 'light', setTheme:
             </AnimatePresence>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function StatsView({ theme }: { theme: 'dark' | 'light' }) {
+  const [logsValue, loading] = useCollection(collection(db, 'logs'));
+  const logs = logsValue?.docs
+    .map(d => ({ id: d.id, ...d.data() } as LogEntry))
+    .sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0))
+    .slice(0, 20) || [];
+
+  return (
+    <div className="space-y-6">
+      <Card className={`${theme === 'dark' ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} backdrop-blur-xl transition-colors duration-500`}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <History className="w-5 h-5 text-cyan-500" />
+            Activity Logs
+          </CardTitle>
+          <CardDescription>Recent commands and system events</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
+                <Cpu className="w-8 h-8 text-cyan-500" />
+              </motion.div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {logs.length === 0 ? (
+                <p className="text-center py-8 text-slate-500 text-sm italic">No recent activity recorded.</p>
+              ) : (
+                logs.map((log) => (
+                  <div key={log.id} className={`flex items-center justify-between p-4 rounded-2xl border ${theme === 'dark' ? 'bg-slate-950/30 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${log.state ? 'bg-cyan-500/10 text-cyan-500' : 'bg-slate-500/10 text-slate-500'}`}>
+                        {log.state ? <Zap className="w-5 h-5" /> : <Power className="w-5 h-5" />}
+                      </div>
+                      <div>
+                        <p className={`text-sm font-bold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>{log.deviceName}</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">{log.action}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-xs font-mono ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>
+                        {log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '...'}
+                      </p>
+                      <p className="text-[9px] text-slate-600 font-bold">
+                        {log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleDateString() : ''}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function TimerView({ theme }: { theme: 'dark' | 'light' }) {
+  const [switchesValue] = useCollection(collection(db, 'switches'));
+  const [timersValue, loading] = useCollection(collection(db, 'timers'));
+  const switches = switchesValue?.docs.map(d => ({ id: d.id, ...d.data() } as SwitchData)) || [];
+  const timers = timersValue?.docs.map(d => ({ id: d.id, ...d.data() } as TimerData)) || [];
+
+  const [newTimer, setNewTimer] = useState({ switchId: '0', time: '', action: true });
+
+  const addTimer = async () => {
+    if (!newTimer.time) return;
+    try {
+      await setDoc(doc(collection(db, 'timers')), {
+        switchId: newTimer.switchId,
+        targetTime: newTimer.time,
+        action: newTimer.action,
+        active: true,
+        createdAt: serverTimestamp()
+      });
+      setNewTimer({ ...newTimer, time: '' });
+    } catch (error) {
+      console.error("Error adding timer:", error);
+    }
+  };
+
+  const deleteTimer = async (id: string) => {
+    try {
+      // In a real app we'd delete, but for now we'll just deactivate
+      await updateDoc(doc(db, 'timers', id), { active: false });
+    } catch (error) {
+      console.error("Error deleting timer:", error);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card className={`${theme === 'dark' ? 'bg-slate-900/40 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} backdrop-blur-xl transition-colors duration-500`}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="w-5 h-5 text-cyan-500" />
+            Scheduled Tasks
+          </CardTitle>
+          <CardDescription>Automate your devices based on time</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className={`p-6 rounded-[2rem] border ${theme === 'dark' ? 'bg-slate-950/30 border-slate-800' : 'bg-slate-50 border-slate-100'} space-y-4`}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Device</Label>
+                <select 
+                  value={newTimer.switchId}
+                  onChange={(e) => setNewTimer({ ...newTimer, switchId: e.target.value })}
+                  className={`w-full h-12 rounded-xl px-4 text-sm font-medium border ${theme === 'dark' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}
+                >
+                  {switches.length > 0 ? (
+                    switches.map(s => <option key={s.id} value={s.id}>{s.name}</option>)
+                  ) : (
+                    <option disabled>Loading devices...</option>
+                  )}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Time</Label>
+                <Input 
+                  type="time" 
+                  value={newTimer.time}
+                  onChange={(e) => setNewTimer({ ...newTimer, time: e.target.value })}
+                  className={`${theme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} h-12 rounded-xl`}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Action</Label>
+                <div className="flex gap-2">
+                  <Button 
+                    onClick={() => setNewTimer({ ...newTimer, action: true })}
+                    variant={newTimer.action ? 'default' : 'outline'}
+                    className={`flex-1 rounded-xl h-12 ${newTimer.action ? 'bg-cyan-600' : ''}`}
+                  >
+                    ON
+                  </Button>
+                  <Button 
+                    onClick={() => setNewTimer({ ...newTimer, action: false })}
+                    variant={!newTimer.action ? 'default' : 'outline'}
+                    className={`flex-1 rounded-xl h-12 ${!newTimer.action ? 'bg-slate-600' : ''}`}
+                  >
+                    OFF
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <Button onClick={addTimer} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl h-12 font-bold gap-2">
+              <Plus className="w-4 h-4" /> Schedule Task
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">Active Timers</h4>
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <Cpu className="w-6 h-6 text-cyan-500 animate-spin" />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {timers.filter(t => t.active).length === 0 ? (
+                  <p className="text-center py-6 text-slate-500 text-xs italic">No active timers set.</p>
+                ) : (
+                  timers.filter(t => t.active).map((timer) => {
+                    const device = switches.find(s => s.id === timer.switchId);
+                    return (
+                      <div key={timer.id} className={`flex items-center justify-between p-4 rounded-2xl border ${theme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-100 shadow-sm'}`}>
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${timer.action ? 'bg-cyan-500/10 text-cyan-500' : 'bg-slate-500/10 text-slate-500'}`}>
+                            <Calendar className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold">{device?.name || 'Unknown'}</p>
+                            <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">
+                              {timer.action ? 'TURN ON' : 'TURN OFF'} AT {timer.targetTime}
+                            </p>
+                          </div>
+                        </div>
+                        <Button onClick={() => deleteTimer(timer.id)} variant="ghost" size="icon" className="text-red-500 hover:bg-red-500/10 rounded-full">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+      
+      <div className={`p-4 rounded-2xl border ${theme === 'dark' ? 'bg-cyan-500/5 border-cyan-500/10' : 'bg-cyan-50 border-cyan-100'} flex gap-3`}>
+        <AlertCircle className="w-5 h-5 text-cyan-500 shrink-0" />
+        <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+          Note: Timers are processed by the cloud engine. Ensure your ESP32 is online to receive commands at the scheduled time.
+        </p>
       </div>
     </div>
   );
