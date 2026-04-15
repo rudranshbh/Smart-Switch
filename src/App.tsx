@@ -490,7 +490,7 @@ void loop() {
       >
         <div>
           <h2 className="text-white font-bold tracking-tight">ESP32 Firmware Guide</h2>
-          <p className="text-slate-400 text-xs font-mono mt-1">Flash this code for instant global control via MQTT</p>
+          <p className="text-slate-400 text-xs font-mono mt-1">Flash this code for instant global control via Firebase RTDB</p>
         </div>
         <div className="flex items-center gap-4">
           {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
