@@ -1,21 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import mqtt from 'mqtt';
 import { motion, AnimatePresence } from 'motion/react';
-import { Power, Lightbulb, Zap, Copy, Check, Server, Activity, Lock, LogOut, ChevronDown, ChevronUp } from 'lucide-react';
+import { Power, Lightbulb, Zap, Copy, Check, Server, Activity, Lock, LogOut, ChevronDown, ChevronUp, AlertTriangle, Pencil } from 'lucide-react';
+import { db, auth, rtdb } from './firebase';
+import { ref, onValue, set, serverTimestamp as rtdbTimestamp } from 'firebase/database';
+import { signInAnonymously } from 'firebase/auth';
+import firebaseConfig from '../firebase-applet-config.json';
 
-// HiveMQ Public Broker
-const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
-const TOPIC_COMMAND = 'smartswitch/rudransh/b106/commands';
-const TOPIC_STATE = 'smartswitch/rudransh/b106/state';
-const TOPIC_LOCK = 'smartswitch/rudransh/b106/lock';
+const DEVICE_ID = 'b106_main';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [states, setStates] = useState<boolean[]>([false, false, false, false]);
-  const [client, setClient] = useState<mqtt.MqttClient | null>(null);
-  const [mqttStatus, setMqttStatus] = useState('INITIALIZING CONNECTION...');
-  const [isLocked, setIsLocked] = useState(false);
-  const [lockTimeLeft, setLockTimeLeft] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState('INITIALIZING...');
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -23,82 +19,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isLocked && lockTimeLeft > 0) {
-      timer = setInterval(() => {
-        setLockTimeLeft(prev => prev - 1);
-      }, 1000);
-    } else if (lockTimeLeft === 0) {
-      setIsLocked(false);
-    }
-    return () => clearInterval(timer);
-  }, [isLocked, lockTimeLeft]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let isMounted = true;
+    setConnectionStatus('SYNCING WITH CLOUD...');
     
-    const mqttClient = mqtt.connect(BROKER_URL, {
-      clientId: 'b106_cmd_' + Math.random().toString(16).substring(2, 10),
-      clean: true,
-      connectTimeout: 5000,
-      reconnectPeriod: 2000,
-      keepalive: 60,
-    });
-
-    mqttClient.on('connect', () => {
-      if (!isMounted) return;
-      setMqttStatus('SECURE CONNECTION ESTABLISHED');
-      mqttClient.subscribe([TOPIC_STATE, TOPIC_LOCK]);
-    });
-
-    mqttClient.on('reconnect', () => {
-      if (!isMounted) return;
-      setMqttStatus('REESTABLISHING CONNECTION...');
-    });
-
-    mqttClient.on('error', (err) => {
-      if (!isMounted) return;
-      if (err.message === 'client disconnecting') return;
-      setMqttStatus('CONNECTION FAILURE');
-      console.error('MQTT Error:', err);
-    });
-
-    mqttClient.on('message', (topic, message) => {
-      if (!isMounted) return;
-      if (topic === TOPIC_LOCK) {
-        if (message.toString() === '1') {
-          setIsLocked(true);
-          setLockTimeLeft(10);
+    const stateRef = ref(rtdb, `devices/${DEVICE_ID}/state`);
+    const unsubscribe = onValue(stateRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const msg = snapshot.val();
+        if (msg.length >= 4) {
+          setStates([msg[0] === '1', msg[1] === '1', msg[2] === '1', msg[3] === '1']);
+          setConnectionStatus('CLOUD SYNC ACTIVE');
         }
+      } else {
+        // Initialize if not exists
+        set(stateRef, '0000');
       }
-      if (topic === TOPIC_STATE) {
-        try {
-          const msg = message.toString();
-          if (msg.length >= 4 && (msg[0] === '0' || msg[0] === '1')) {
-            // New ultra-robust 4-byte protocol
-            setStates([msg[0] === '1', msg[1] === '1', msg[2] === '1', msg[3] === '1']);
-          } else {
-            // Fallback for old JSON format
-            const newStates = JSON.parse(msg);
-            if (Array.isArray(newStates) && newStates.length === 4) {
-              setStates(newStates);
-            }
-          }
-        } catch (e) {
-          console.error("Invalid message format");
-        }
-      }
+    }, (err) => {
+      setConnectionStatus('SYNC ERROR');
+      console.error('RTDB Error:', err);
     });
 
-    setClient(mqttClient);
-
-    return () => {
-      isMounted = false;
-      mqttClient.end(true);
-    };
-  }, [isAuthenticated]);
+    return () => unsubscribe();
+  }, []);
 
   const isCooldown = React.useRef(false);
 
@@ -107,45 +48,41 @@ export default function App() {
     setTimeout(() => { isCooldown.current = false; }, 500);
   };
 
+  const updateCloudState = async (newStates: boolean[]) => {
+    const payload = newStates.map(s => s ? '1' : '0').join('');
+    try {
+      await set(ref(rtdb, `devices/${DEVICE_ID}/state`), payload);
+    } catch (e) {
+      console.error('Cloud update failed', e);
+    }
+  };
+
   const toggleSwitch = (index: number) => {
-    if (isLocked) return;
     if (isCooldown.current) return;
     triggerCooldown();
 
     const newStates = [...states];
     newStates[index] = !newStates[index];
     setStates(newStates);
-    if (client && client.connected) {
-      client.publish(TOPIC_LOCK, "1");
-      const payload = newStates.map(s => s ? '1' : '0').join('');
-      client.publish(TOPIC_COMMAND, payload);
-    }
+    updateCloudState(newStates);
   };
 
   const allOn = () => {
-    if (isLocked) return;
     if (isCooldown.current) return;
     triggerCooldown();
 
     const newStates = [true, true, true, true];
     setStates(newStates);
-    if (client && client.connected) {
-      client.publish(TOPIC_LOCK, "1");
-      client.publish(TOPIC_COMMAND, "1111");
-    }
+    updateCloudState(newStates);
   };
 
   const allOff = () => {
-    if (isLocked) return;
     if (isCooldown.current) return;
     triggerCooldown();
 
     const newStates = [false, false, false, false];
     setStates(newStates);
-    if (client && client.connected) {
-      client.publish(TOPIC_LOCK, "1");
-      client.publish(TOPIC_COMMAND, "0000");
-    }
+    updateCloudState(newStates);
   };
 
   return (
@@ -201,9 +138,7 @@ export default function App() {
               toggleSwitch={toggleSwitch} 
               allOn={allOn} 
               allOff={allOff}
-              mqttStatus={mqttStatus}
-              isLocked={isLocked}
-              lockTimeLeft={lockTimeLeft}
+              connectionStatus={connectionStatus}
             />
           )}
         </AnimatePresence>
@@ -306,9 +241,7 @@ interface DashboardViewProps {
   toggleSwitch: (index: number) => void;
   allOn: () => void;
   allOff: () => void;
-  mqttStatus: string;
-  isLocked: boolean;
-  lockTimeLeft: number;
+  connectionStatus: string;
 }
 
 const DashboardView: React.FC<DashboardViewProps> = ({ 
@@ -316,13 +249,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   toggleSwitch, 
   allOn, 
   allOff,
-  mqttStatus,
-  isLocked,
-  lockTimeLeft
+  connectionStatus
 }) => {
   const switchNames = ['Bulb 1', 'Bulb 2', 'Plug 1', 'Plug 2'];
   const switchTypes = ['bulb', 'bulb', 'plug', 'plug'];
-  const isConnected = mqttStatus.includes('ESTABLISHED');
+  const isConnected = connectionStatus.includes('ACTIVE');
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -363,21 +294,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isConnected ? 'bg-cyan-500' : 'bg-red-500'}`}></span>
           </div>
           <span className="text-[10px] font-mono tracking-widest uppercase text-slate-300">
-            {mqttStatus}
+            {connectionStatus}
           </span>
         </div>
       </header>
 
       <div className="relative">
-        {isLocked && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-sm rounded-3xl border border-cyan-500/30">
-            <div className="w-16 h-16 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-6"></div>
-            <h3 className="text-2xl font-black tracking-widest text-cyan-400 mb-2">HARDWARE SYNCING</h3>
-            <p className="text-sm font-mono text-slate-300">PLEASE WAIT // {lockTimeLeft}s</p>
-          </div>
-        )}
-        
-        <div className={`transition-all duration-500 ${isLocked ? 'opacity-30 pointer-events-none blur-sm' : ''}`}>
+        <div className="transition-all duration-500">
           {/* Global Controls */}
           <div className="flex flex-wrap gap-4 mb-10">
         <button 
@@ -461,146 +384,94 @@ function ESP32SetupView() {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   
-  const espCode = `// --- B-106 COMMAND PROTOCOL (MQTT) ---
-// Requires: PubSubClient by Nick O'Leary
+  const espCode = `// --- B-106 ULTRA-STABLE COMMAND PROTOCOL ---
 #include <WiFi.h>
-#include <PubSubClient.h>
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
+#include <Firebase_ESP_Client.h>
+#include <time.h>
 
 const char* ssid = "B-BLOCK";
 const char* password = "welcome$ABH";
 
-const char* mqtt_server = "broker.hivemq.com";
-const int mqtt_port = 1883;
+// NO HTTPS:// AND NO TRAILING SLASH
+#define DATABASE_URL "gen-lang-client-0121307738-default-rtdb.firebaseio.com" 
+#define API_KEY "${firebaseConfig.apiKey}"
 
-const char* topic_command = "smartswitch/rudransh/b106/commands";
-const char* topic_state = "smartswitch/rudransh/b106/state";
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
 
-WiFiClient espClient;
-PubSubClient client(espClient);
-
+unsigned long lastSync = 0;
 const int relayPins[4] = {26, 27, 14, 12}; 
-bool relayState[4] = {HIGH, HIGH, HIGH, HIGH};
 
-volatile bool stateChanged = false;
-
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true);
-  delay(100);
-  
-  WiFi.begin(ssid, password);
-  int wifiRetries = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    wifiRetries++;
-    if (wifiRetries > 10) {
-      Serial.println("\\n[FATAL] WiFi failed. REBOOTING IMMEDIATELY...");
-      delay(500);
-      ESP.restart();
+void updateRelays(String state) {
+  state.replace("\\"", "");
+  if (state.length() == 4) {
+    Serial.println(">> RELAY COMMAND: " + state);
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(relayPins[i], (state[i] == '1') ? LOW : HIGH);
     }
   }
-  Serial.println("\\nWiFi connected");
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  // ULTRA-ROBUST PROTOCOL: We only expect exactly 4 bytes (e.g. "1010")
-  if (length < 4) return;
-  
-  for (int i = 0; i < 4; i++) {
-    if (payload[i] == '1') {
-      if (relayState[i] != LOW) {
-        relayState[i] = LOW;
-        digitalWrite(relayPins[i], LOW);
-        delay(20); // Stagger relays
-      }
-    } else if (payload[i] == '0') {
-      if (relayState[i] != HIGH) {
-        relayState[i] = HIGH;
-        digitalWrite(relayPins[i], HIGH);
-        delay(20); // Stagger relays
-      }
-    }
-  }
-  
-  stateChanged = true;
+void streamCallback(FirebaseStream data) {
+  Serial.println(">> STREAM UPDATE");
+  updateRelays(data.payload());
 }
 
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    String clientId = "B106-Node-";
-    clientId += String(random(0xffff), HEX);
-    
-    if (client.connect(clientId.c_str())) {
-      Serial.println("connected");
-      client.subscribe(topic_command);
-      
-      // Publish initial state
-      char stateStr[5];
-      for(int i=0; i<4; i++) {
-        stateStr[i] = (relayState[i] == LOW) ? '1' : '0';
-      }
-      stateStr[4] = '\\0';
-      client.publish(topic_state, stateStr);
-      
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" -> [FATAL] MQTT LOST. REBOOTING IMMEDIATELY...");
-      delay(500);
-      ESP.restart();
-    }
-  }
+void streamTimeoutCallback(bool timeout) {
+  if (timeout) Serial.println("Stream timeout...");
 }
 
 void setup() {
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout
-
   Serial.begin(115200);
+  delay(1000);
+  Serial.println("\\n\\n--- B-106 STARTING ---");
+
   for(int i=0; i<4; i++) {
     pinMode(relayPins[i], OUTPUT);
-    digitalWrite(relayPins[i], relayState[i]);
+    digitalWrite(relayPins[i], HIGH); 
   }
-  setup_wifi();
-  client.setBufferSize(256); 
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
+  
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\\nWiFi Connected!");
+
+  configTime(0, 0, "pool.ntp.org");
+  
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
+  config.signer.test_mode = true; 
+
+  fbdo.setResponseSize(2048);
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  Serial.println("Connecting to Firebase...");
+  if (!Firebase.RTDB.beginStream(&fbdo, "/devices/b106_main/state")) {
+    Serial.println("Stream Error: " + fbdo.errorReason());
+  } else {
+    Firebase.RTDB.setStreamCallback(&fbdo, streamCallback, streamTimeoutCallback);
+    Serial.println("Stream Active!");
+  }
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\\n[FATAL] WiFi connection lost during operation. REBOOTING IMMEDIATELY...");
-    delay(500);
-    ESP.restart();
-  }
-
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
-  
-  if (stateChanged) {
-    char stateStr[5];
-    for(int i=0; i<4; i++) {
-      stateStr[i] = (relayState[i] == LOW) ? '1' : '0';
-    }
-    stateStr[4] = '\\0';
+  // Simple Polling Fallback (Every 10 seconds)
+  if (millis() - lastSync > 10000) {
+    lastSync = millis();
     
-    Serial.print("Publishing new state: ");
-    Serial.println(stateStr);
-    client.publish(topic_state, stateStr);
-    stateChanged = false;
+    if (Firebase.ready()) {
+      // Use a temporary data object for polling to not disturb the stream
+      FirebaseData pollData;
+      if (Firebase.RTDB.getString(&pollData, "/devices/b106_main/state")) {
+        Serial.println("Sync: " + pollData.stringData());
+        updateRelays(pollData.stringData());
+      } else {
+        Serial.println("Sync Error: " + pollData.errorReason());
+      }
+    }
   }
-  
-  yield();
 }
 `;
 

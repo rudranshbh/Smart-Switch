@@ -1,6 +1,6 @@
 {
-  "name": "SmartSwitch B-106",
-  "description": "Cloud-based Smart Home Hub for Room B-106",
+  "name": "SMART SWITCH (B-106)",
+  "description": "High-performance IoT dashboard for global relay control via Firebase RTDB and ESP32.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }
