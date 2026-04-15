@@ -12,6 +12,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [states, setStates] = useState<boolean[]>([false, false, false, false]);
   const [connectionStatus, setConnectionStatus] = useState('INITIALIZING...');
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -45,7 +46,11 @@ export default function App() {
 
   const triggerCooldown = () => {
     isCooldown.current = true;
-    setTimeout(() => { isCooldown.current = false; }, 500);
+    setIsProcessing(true);
+    setTimeout(() => { 
+      isCooldown.current = false; 
+      setIsProcessing(false);
+    }, 3000);
   };
 
   const updateCloudState = async (newStates: boolean[]) => {
@@ -140,6 +145,34 @@ export default function App() {
               allOff={allOff}
               connectionStatus={connectionStatus}
             />
+          )}
+        </AnimatePresence>
+
+        {/* Anti-Spam Processing Overlay */}
+        <AnimatePresence>
+          {isProcessing && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-md bg-slate-950/40 pointer-events-auto"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-slate-900/80 border border-cyan-500/30 p-8 rounded-3xl shadow-2xl shadow-cyan-500/10 flex flex-col items-center gap-6"
+              >
+                <div className="relative">
+                  <div className="w-16 h-16 border-4 border-slate-800 border-t-cyan-500 rounded-full animate-spin" />
+                  <Zap className="w-6 h-6 text-cyan-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+                </div>
+                <div className="text-center">
+                  <h3 className="text-white font-black tracking-widest uppercase text-sm">Processing</h3>
+                  <p className="text-slate-400 text-[10px] font-bold tracking-widest uppercase mt-1">Syncing with Cloud...</p>
+                </div>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>
         
