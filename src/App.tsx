@@ -417,19 +417,21 @@ function ESP32SetupView() {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   
-  const espCode = `// --- B-106 ULTRA-STABLE COMMAND PROTOCOL ---
+  const espCode = `// --- B-106 ULTRA-STABLE COMMAND PROTOCOL V4 ---
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
 #include <time.h>
+#include "soc/soc.h"           // For Brownout
+#include "soc/rtc_cntl_reg.h"  // For Brownout
 
 const char* ssid = "B-BLOCK";
 const char* password = "welcome$ABH";
 
-// NO HTTPS:// AND NO TRAILING SLASH
 #define DATABASE_URL "gen-lang-client-0121307738-default-rtdb.firebaseio.com" 
 #define API_KEY "${firebaseConfig.apiKey}"
 
 FirebaseData fbdo;
+FirebaseData pollData; 
 FirebaseAuth auth;
 FirebaseConfig config;
 
@@ -439,7 +441,7 @@ const int relayPins[4] = {26, 27, 14, 12};
 void updateRelays(String state) {
   state.replace("\\"", "");
   if (state.length() == 4) {
-    Serial.println(">> RELAY COMMAND: " + state);
+    Serial.println("\\n>> RELAY COMMAND: " + state);
     for (int i = 0; i < 4; i++) {
       digitalWrite(relayPins[i], (state[i] == '1') ? LOW : HIGH);
     }
@@ -447,7 +449,7 @@ void updateRelays(String state) {
 }
 
 void streamCallback(FirebaseStream data) {
-  Serial.println(">> STREAM UPDATE");
+  Serial.println("\\n>> STREAM UPDATE");
   updateRelays(data.payload());
 }
 
@@ -456,8 +458,10 @@ void streamTimeoutCallback(bool timeout) {
 }
 
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // DISABLE BROWNOUT
+  
   Serial.begin(115200);
-  delay(1000);
+  delay(5000); // Let power fully stabilize
   Serial.println("\\n\\n--- B-106 STARTING ---");
 
   for(int i=0; i<4; i++) {
@@ -465,43 +469,66 @@ void setup() {
     digitalWrite(relayPins[i], HIGH); 
   }
   
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false); 
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-  Serial.println("\\nWiFi Connected!");
+  
+  Serial.print("WiFi Handshake");
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
+    delay(500);
+    Serial.print(".");
+  }
 
-  configTime(0, 0, "pool.ntp.org");
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\\nWiFi Failed. Resetting...");
+    delay(5000);
+    ESP.restart();
+  }
+
+  Serial.println("\\nWiFi Connected! IP: " + WiFi.localIP().toString());
+
+  // SSL Time Sync (MANDATORY FOR SSL)
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   
   config.api_key = API_KEY;
   config.database_url = DATABASE_URL;
   config.signer.test_mode = true; 
 
-  fbdo.setResponseSize(2048);
+  // SSL BUFFER TUNING (V4)
+  fbdo.setBSSLBufferSize(1024, 512); // Fit into heap, but enough for 4-char string
+  fbdo.setResponseSize(1024);
+  pollData.setBSSLBufferSize(1024, 512);
+  pollData.setResponseSize(512);
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
-  Serial.println("Connecting to Firebase...");
   if (!Firebase.RTDB.beginStream(&fbdo, "/devices/b106_main/state")) {
     Serial.println("Stream Error: " + fbdo.errorReason());
   } else {
     Firebase.RTDB.setStreamCallback(&fbdo, streamCallback, streamTimeoutCallback);
-    Serial.println("Stream Active!");
+    Serial.println("Real-time Stream: ACTIVE");
   }
 }
 
 void loop() {
-  // Simple Polling Fallback (Every 10 seconds)
   if (millis() - lastSync > 10000) {
     lastSync = millis();
     
     if (Firebase.ready()) {
-      // Use a temporary data object for polling to not disturb the stream
-      FirebaseData pollData;
       if (Firebase.RTDB.getString(&pollData, "/devices/b106_main/state")) {
-        Serial.println("Sync: " + pollData.stringData());
         updateRelays(pollData.stringData());
       } else {
-        Serial.println("Sync Error: " + pollData.errorReason());
+        Serial.println("Sync Log: " + pollData.errorReason());
+        
+        // AUTO-RECOVERY: If SSL fails, reset the engine
+        if (pollData.errorReason().indexOf("SSL") != -1 || pollData.errorReason().indexOf("timed out") != -1) {
+          Serial.println(">> SSL CRITICAL ERROR. RESETTING ENGINE...");
+          pollData.clear();
+          fbdo.clear();
+          delay(2000);
+        }
       }
     }
   }
