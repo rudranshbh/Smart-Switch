@@ -417,12 +417,12 @@ function ESP32SetupView() {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   
-  const espCode = `// --- B-106 ULTRA-STABLE COMMAND PROTOCOL V4 ---
+  const espCode = `// --- B-106 LOUD WARRIOR V12 ---
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
 #include <time.h>
-#include "soc/soc.h"           // For Brownout
-#include "soc/rtc_cntl_reg.h"  // For Brownout
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 const char* ssid = "B-BLOCK";
 const char* password = "welcome$ABH";
@@ -439,99 +439,102 @@ unsigned long lastSync = 0;
 const int relayPins[4] = {26, 27, 14, 12}; 
 
 void updateRelays(String state) {
+  // CLEAN DATA
   state.replace("\\"", "");
+  state.trim();
+  
   if (state.length() == 4) {
-    Serial.println("\\n>> RELAY COMMAND: " + state);
+    Serial.println("\\n[DATA RECEIVED]: " + state);
     for (int i = 0; i < 4; i++) {
-      digitalWrite(relayPins[i], (state[i] == '1') ? LOW : HIGH);
+        digitalWrite(relayPins[i], (state[i] == '1') ? LOW : HIGH);
     }
+  } else {
+    Serial.println("\\n[SKIPPED]: Invalid length or format: " + state);
   }
 }
 
 void streamCallback(FirebaseStream data) {
-  Serial.println("\\n>> STREAM UPDATE");
+  Serial.println("\\n[STREAM EVENT]");
   updateRelays(data.payload());
 }
 
 void streamTimeoutCallback(bool timeout) {
-  if (timeout) Serial.println("Stream timeout...");
+  if(timeout) Serial.print("~"); // Heartbeat
 }
 
 void setup() {
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // DISABLE BROWNOUT
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
+  setCpuFrequencyMhz(80); 
   
   Serial.begin(115200);
-  delay(5000); // Let power fully stabilize
-  Serial.println("\\n\\n--- B-106 STARTING ---");
+  delay(5000); 
+  Serial.println("\\n\\n--- B-106 V12: LOUD WARRIOR ---");
 
+  // RELAY STARTUP TEST
+  Serial.println("Testing Relays...");
   for(int i=0; i<4; i++) {
     pinMode(relayPins[i], OUTPUT);
-    digitalWrite(relayPins[i], HIGH); 
+    digitalWrite(relayPins[i], LOW); // Turn ON
+    delay(300);
+    digitalWrite(relayPins[i], HIGH); // Turn OFF
   }
+  Serial.println("Relay test complete.");
   
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false); 
+  WiFi.setTxPower(WIFI_POWER_13dBm); 
+  
   WiFi.begin(ssid, password);
   
-  Serial.print("WiFi Handshake");
-  unsigned long startAttemptTime = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
-    delay(500);
+  Serial.print("Connecting WiFi");
+  unsigned long startAt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAt < 35000) {
+    delay(1000);
     Serial.print(".");
+    if(WiFi.status() == WL_CONNECT_FAILED) WiFi.begin(ssid, password);
+    yield();
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\\nWiFi Failed. Resetting...");
+    Serial.println("\\nWiFi Stuck. Restarting...");
     delay(5000);
     ESP.restart();
   }
 
   Serial.println("\\nWiFi Connected! IP: " + WiFi.localIP().toString());
-
-  // SSL Time Sync (MANDATORY FOR SSL)
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   
+  configTime(0, 0, "pool.ntp.org");
   config.api_key = API_KEY;
   config.database_url = DATABASE_URL;
   config.signer.test_mode = true; 
 
-  // SSL BUFFER TUNING (V4)
-  fbdo.setBSSLBufferSize(1024, 512); // Fit into heap, but enough for 4-char string
-  fbdo.setResponseSize(1024);
+  fbdo.setBSSLBufferSize(1024, 512);
   pollData.setBSSLBufferSize(1024, 512);
-  pollData.setResponseSize(512);
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
-  if (!Firebase.RTDB.beginStream(&fbdo, "/devices/b106_main/state")) {
-    Serial.println("Stream Error: " + fbdo.errorReason());
-  } else {
+  if (Firebase.RTDB.beginStream(&fbdo, "/devices/b106_main/state")) {
     Firebase.RTDB.setStreamCallback(&fbdo, streamCallback, streamTimeoutCallback);
-    Serial.println("Real-time Stream: ACTIVE");
+    Serial.println("CLOUD STREAM ACTIVE");
+  } else {
+    Serial.println("STREAM ERROR: " + fbdo.errorReason());
   }
 }
 
 void loop() {
-  if (millis() - lastSync > 10000) {
+  if (millis() - lastSync > 15000) {
     lastSync = millis();
-    
     if (Firebase.ready()) {
-      if (Firebase.RTDB.getString(&pollData, "/devices/b106_main/state")) {
-        updateRelays(pollData.stringData());
+      if(Firebase.RTDB.get(&pollData, "/devices/b106_main/state")) {
+         Serial.println("\\n[POLL SYNC]");
+         updateRelays(pollData.stringData());
       } else {
-        Serial.println("Sync Log: " + pollData.errorReason());
-        
-        // AUTO-RECOVERY: If SSL fails, reset the engine
-        if (pollData.errorReason().indexOf("SSL") != -1 || pollData.errorReason().indexOf("timed out") != -1) {
-          Serial.println(">> SSL CRITICAL ERROR. RESETTING ENGINE...");
-          pollData.clear();
-          fbdo.clear();
-          delay(2000);
-        }
+         Serial.println("\\n[POLL FAILED]: " + pollData.errorReason());
       }
     }
   }
+  yield();
 }
 `;
 
